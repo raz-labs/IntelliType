@@ -12,6 +12,7 @@ export interface PropertySignature {
     type: string;
     optional: boolean;
     value?: any;
+    nestedProperties?: PropertySignature[];
 }
 
 export interface MethodSignature {

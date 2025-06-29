@@ -57,26 +57,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         console.log(`🔍 IntelliType: Found ${matches.length} matches`);
         
         if (matches.length === 0) {
-            // For testing, let's create a mock match if we find an interface in the same file
-            const mockMatch = this.createMockMatch(untypedObject, doc);
-            if (mockMatch) {
-                const items = [{
-                    label: mockMatch.typeName,
-                    description: `${Math.round(mockMatch.compatibilityScore * 100)}% match`,
-                    detail: `From ${mockMatch.filePath}`,
-                    match: mockMatch
-                }];
-                
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: `Select a type for '${untypedObject.name}'`
-                });
-
-                if (selected) {
-                    await this.applyType(untypedObject, selected.match, doc);
-                }
-                return;
-            }
-            
             vscode.window.showInformationMessage(
                 `No matching types found for object '${untypedObject.name}'. Consider creating a new interface.`
             );
@@ -129,14 +109,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         // Find the matching type
         const matches = await this.typeAnalyzer.findMatchingTypes(untypedObject.shape);
         let allMatches = [...matches];
-        
-        // Add mock matches if no real matches found
-        if (allMatches.length === 0) {
-            const mockMatch = this.createMockMatch(untypedObject, doc);
-            if (mockMatch) {
-                allMatches = [mockMatch];
-            }
-        }
         
         // Sort matches: primary key = score (desc), secondary key = path distance (asc)
         allMatches.sort((a, b) => {
@@ -213,15 +185,9 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         
         // Get compatible types
         const matches = await this.typeAnalyzer.findMatchingTypes(untypedObject.shape);
-        let allMatches = [...matches];
         
-        // Add mock matches if no real matches found
-        if (allMatches.length === 0) {
-            const mockMatch = this.createMockMatch(untypedObject, document);
-            if (mockMatch) {
-                allMatches = [mockMatch];
-            }
-        }
+        // Remove mock matching - always use real TypeMatcher
+        const allMatches = [...matches];
         
         // Sort matches: primary key = score (desc), secondary key = path distance (asc)
         allMatches.sort((a, b) => {
@@ -276,67 +242,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         }
 
         return new vscode.Hover(markdown, untypedObject.location.range);
-    }
-
-    private createMockMatch(untypedObject: UntypedObject, document: vscode.TextDocument): TypeMatch | null {
-        // Look for interfaces in the current document
-        const text = document.getText();
-        const interfaceRegex = /interface\s+(\w+)\s*{([^}]*)}/gs;
-        let match;
-        
-        while ((match = interfaceRegex.exec(text)) !== null) {
-            const interfaceName = match[1];
-            const interfaceBody = match[2];
-            
-            // Extract interface properties more carefully
-            const interfaceProps = this.parseInterfaceProperties(interfaceBody);
-            const objPropNames = untypedObject.shape.properties.map(p => p.name);
-            const interfacePropNames = interfaceProps.map(p => p.name);
-            
-            const matchingProps = objPropNames.filter(prop => 
-                interfacePropNames.includes(prop)
-            );
-            
-            if (matchingProps.length > 0) {
-                const score = matchingProps.length / Math.max(objPropNames.length, interfacePropNames.length);
-                
-                // Calculate missing and extra properties
-                const missing = interfacePropNames.filter(prop => !objPropNames.includes(prop));
-                const extra = objPropNames.filter(prop => !interfacePropNames.includes(prop));
-                
-                return {
-                    typeName: interfaceName,
-                    filePath: document.uri.fsPath,
-                    location: new vscode.Location(document.uri, new vscode.Position(0, 0)),
-                    compatibilityScore: score,
-                    missingProperties: missing,
-                    extraProperties: extra,
-                    isExactMatch: missing.length === 0 && extra.length === 0
-                };
-            }
-        }
-        
-        return null;
-    }
-
-    private parseInterfaceProperties(interfaceBody: string): { name: string, type: string }[] {
-        const properties: { name: string, type: string }[] = [];
-        const lines = interfaceBody.split('\n');
-        
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed && !trimmed.startsWith('//')) {
-                const propMatch = trimmed.match(/(\w+)\s*:\s*([^;,]+)/);
-                if (propMatch) {
-                    properties.push({
-                        name: propMatch[1],
-                        type: propMatch[2].trim()
-                    });
-                }
-            }
-        }
-        
-        return properties;
     }
 
     private shouldAddImport(typeMatch: TypeMatch, document: vscode.TextDocument): boolean {
@@ -406,17 +311,26 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
     }
 
     private getRelativePath(fromFile: string, toFile: string): string {
-        // Simple relative path calculation
-        // In a real implementation, this would use proper path resolution
-        const fromDir = fromFile.substring(0, fromFile.lastIndexOf('/'));
-        const toDir = toFile.substring(0, toFile.lastIndexOf('/'));
+        const path = require('path');
         
-        if (fromDir === toDir) {
-            return `./${fromFile.substring(fromFile.lastIndexOf('/') + 1).replace('.ts', '')}`;
+        // Get the directory of the current file
+        const currentDir = path.dirname(toFile);
+        
+        // Get relative path from current file to target file
+        const relativePath = path.relative(currentDir, fromFile);
+        
+        // Remove the .ts extension
+        const withoutExtension = relativePath.replace(/\.ts$/, '');
+        
+        // Convert backslashes to forward slashes for ES module imports
+        const normalizedPath = withoutExtension.replace(/\\/g, '/');
+        
+        // Ensure it starts with ./ or ../
+        if (!normalizedPath.startsWith('.')) {
+            return `./${normalizedPath}`;
         }
         
-        // For now, just use the filename
-        return `./${fromFile.replace('.ts', '')}`;
+        return normalizedPath;
     }
 
     private calculatePathDistance(matchPath: string, currentPath: string): number {

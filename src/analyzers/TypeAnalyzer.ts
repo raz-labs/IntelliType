@@ -102,10 +102,18 @@ export class TypeAnalyzer {
                 const propName = prop.name.getText(sourceFile);
                 const propType = this.inferType(prop.initializer);
                 
+                let nestedProperties: PropertySignature[] | undefined;
+                
+                // If this is a nested object, analyze its structure
+                if (ts.isObjectLiteralExpression(prop.initializer)) {
+                    nestedProperties = this.extractNestedProperties(prop.initializer, sourceFile);
+                }
+                
                 properties.push({
                     name: propName,
                     type: propType,
-                    optional: false
+                    optional: false,
+                    nestedProperties
                 });
             }
         }
@@ -129,6 +137,33 @@ export class TypeAnalyzer {
             ),
             variableName: ''
         };
+    }
+
+    private extractNestedProperties(node: ts.ObjectLiteralExpression, sourceFile: ts.SourceFile): PropertySignature[] {
+        const properties: PropertySignature[] = [];
+        
+        for (const prop of node.properties) {
+            if (ts.isPropertyAssignment(prop) && prop.name) {
+                const propName = prop.name.getText(sourceFile);
+                const propType = this.inferType(prop.initializer);
+                
+                let nestedProperties: PropertySignature[] | undefined;
+                
+                // Recursively analyze nested objects
+                if (ts.isObjectLiteralExpression(prop.initializer)) {
+                    nestedProperties = this.extractNestedProperties(prop.initializer, sourceFile);
+                }
+                
+                properties.push({
+                    name: propName,
+                    type: propType,
+                    optional: false,
+                    nestedProperties
+                });
+            }
+        }
+        
+        return properties;
     }
 
     private inferType(node: ts.Node): string {
