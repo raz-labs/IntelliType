@@ -21,12 +21,12 @@
 
   "repository": {
     "type": "git",
-    "url": "https://github.com/username/intellitype.git"
+    "url": "https://github.com/raziel5746/IntelliType.git"
   },
   "bugs": {
-    "url": "https://github.com/username/intellitype/issues"
+    "url": "https://github.com/raziel5746/IntelliType/issues"
   },
-  "homepage": "https://github.com/username/intellitype#readme",
+  "homepage": "https://github.com/raziel5746/IntelliType#readme",
   "license": "MIT",
   "activationEvents": [
     "onLanguage:typescript",
