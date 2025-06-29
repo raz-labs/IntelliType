@@ -5,7 +5,7 @@
 
 **Intelligent TypeScript type discovery and application for VS Code**
 
-![IntelliType Logo](https://raw.githubusercontent.com/raziel5746/IntelliType/main/images/icon.svg)
+![IntelliType Logo](https://raw.githubusercontent.com/raziel5746/IntelliType/main/images/icon.png)
 
 ## Overview
 
