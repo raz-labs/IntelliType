@@ -23,6 +23,13 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
                 this.applyTypeCommand.bind(this))
         );
 
+        this.disposables.push(
+            vscode.commands.registerCommand('intellitype.goToDefinition', 
+                this.goToDefinitionCommand.bind(this))
+        );
+
+
+
         // Register hover provider only
         this.disposables.push(
             vscode.languages.registerHoverProvider(
@@ -155,6 +162,32 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         );
     }
 
+    private async goToDefinitionCommand(filePath: string, line: number, character: number) {
+        console.log('🔗 IntelliType: goToDefinitionCommand called for:', filePath, line, character);
+        
+        try {
+            const fileUri = vscode.Uri.file(filePath);
+            const document = await vscode.workspace.openTextDocument(fileUri);
+            const position = new vscode.Position(line, character);
+            
+            // Show the document and reveal the position
+            const editor = await vscode.window.showTextDocument(document, {
+                selection: new vscode.Range(position, position),
+                viewColumn: vscode.ViewColumn.Active
+            });
+            
+            // Reveal the range and center it in the viewport
+            editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            
+            console.log('✅ IntelliType: Successfully navigated to type definition');
+        } catch (error) {
+            console.error('❌ IntelliType: Error navigating to definition:', error);
+            vscode.window.showErrorMessage(`Could not navigate to type definition: ${error}`);
+        }
+    }
+
+
+
     // Hover Provider implementation
     public async provideHover(
         document: vscode.TextDocument,
@@ -210,18 +243,28 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
                 const percentage = Math.round(match.compatibilityScore * 100);
                 const fileInfo = this.getFileDisplayInfo(match, document);
                 
-                const commandArgs = JSON.stringify([
+                // Create apply command
+                const applyCommandArgs = JSON.stringify([
                     document.uri.toString(), 
                     position.line, 
                     position.character,
                     match.typeName
                 ]);
-                const commandUri = vscode.Uri.parse(`command:intellitype.applyType?${commandArgs}`);
+                const applyCommandUri = vscode.Uri.parse(`command:intellitype.applyType?${applyCommandArgs}`);
                 
-                const hoverTitle = `Click to apply type '${match.typeName}'`;
+                // Create navigation command
+                const navCommandArgs = JSON.stringify([
+                    match.filePath,
+                    match.location.range.start.line,
+                    match.location.range.start.character
+                ]);
+                const navCommandUri = vscode.Uri.parse(`command:intellitype.goToDefinition?${navCommandArgs}`);
+                
+                const applyTitle = `Apply type '${match.typeName}'`;
+                const navTitle = `Go to definition of '${match.typeName}'`;
 
                 markdown.appendMarkdown(`\n---\n`);
-                markdown.appendMarkdown(`[**${match.typeName}**](${commandUri} "${hoverTitle}") _(${percentage}% match)_ [${fileInfo}]\n`);
+                markdown.appendMarkdown(`[🔗](${navCommandUri} "${navTitle}") [**${match.typeName}**](${applyCommandUri} "${applyTitle}") _(${percentage}% match)_ [${fileInfo}]\n`);
                 
                 const typeStructure = await this.getTypeStructure(match);
                 if (typeStructure) {

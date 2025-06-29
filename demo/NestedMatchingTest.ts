@@ -50,7 +50,7 @@ const testUserWithCorrectProfile = {
         }
     },
     settings: {
-        theme: "light",
+        theme: "gray",
         notifications: {
             email: true,
             push: true,

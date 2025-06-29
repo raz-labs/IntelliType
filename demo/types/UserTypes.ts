@@ -12,7 +12,7 @@ export interface User {
 export interface UserProfile {
     avatar: string;
     bio: string;
-    location: Address;
+    // location: Address;
     socialLinks: SocialLinks;
 }
 
