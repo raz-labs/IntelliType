@@ -17,8 +17,8 @@
     "interfaces",
     "intellisense",
     "productivity"
-  ],
-
+      ],
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/raziel5746/IntelliType.git"

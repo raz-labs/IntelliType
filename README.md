@@ -1,6 +1,11 @@
-# IntelliType - Intelligent TypeScript Type Discovery
+# IntelliType ✨
 
-![IntelliType Logo](images/icon.png)
+[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/raz-labs.intellitype?style=for-the-badge&label=Marketplace&logo=visual-studio-code&color=blue)](https://marketplace.visualstudio.com/items?itemName=raz-labs.intellitype)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue?style=for-the-badge&logo=github)](https://github.com/raziel5746/IntelliType)
+
+**Intelligent TypeScript type discovery and application for VS Code**
+
+![IntelliType Logo](https://raw.githubusercontent.com/raziel5746/IntelliType/main/images/icon.svg)
 
 ## Overview
 
@@ -14,30 +19,36 @@ IntelliType is a VS Code extension that helps TypeScript developers discover and
 - Shows subtle diagnostic indicators for objects that could benefit from typing
 
 ### 💡 Intelligent Type Suggestions
-- Hover over untyped objects to see detected properties
-- Click "Show compatible types" to see matching interfaces
-- One-click type application
+- Hover over untyped objects to see a list of compatible types
+- See a compatibility score for each suggested type
+- Click a suggested type directly in the hover panel to apply it
+- Automatic import statements are added when a type is applied
 
 ### ⚡ Seamless Integration
-- Works with your existing TypeScript configuration
+- Works with your existing TypeScript (`.ts` and `.tsx`) configuration
 - Non-intrusive UI that follows VS Code conventions
 - Configurable diagnostic levels
 
 ## Installation
 
-1. Open VS Code
-2. Press `Ctrl+P` / `Cmd+P` to open the Quick Open dialog
-3. Type `ext install intellitype` and press Enter
-4. Reload VS Code
+1. Open **VS Code**
+2. Go to the **Extensions** view (`Ctrl+Shift+X`)
+3. Search for `IntelliType`
+4. Click **Install** on the **"IntelliType"** extension by **raz-labs**
+
+Alternatively, open the command palette (`Ctrl+P`) and enter:
+```
+ext install raz-labs.intellitype
+```
 
 ## Usage
 
-1. Open any TypeScript file in your project
-2. IntelliType will automatically analyze untyped objects
-3. Look for blue squiggly lines under object variable names
-4. Hover over the underlined object to see available actions
-5. Click "Show compatible types" to see matching interfaces
-6. Select a type from the list to apply it
+1. Open any TypeScript or TSX file in your project.
+2. IntelliType will automatically analyze untyped object literals.
+3. Look for a **wavy blue underline** beneath the names of untyped variables.
+4. **Hover** over an underlined variable to see a popup with compatible type suggestions.
+5. In the hover panel, **click on the name** of the type you want to apply.
+6. The type will be applied to your variable, and an import statement will be added if necessary.
 
 ### Example
 
@@ -73,7 +84,7 @@ IntelliType can be configured through VS Code settings:
   "intellitype.minimumCompatibilityScore": 0.7,
   
   // Maximum number of type suggestions
-  "intellitype.maxSuggestions": 10,
+  "intellitype.maxSuggestions": 5,
   
   // Include types from node_modules
   "intellitype.includeNodeModules": false
@@ -89,7 +100,6 @@ IntelliType can be configured through VS Code settings:
 ## Known Issues
 
 - Type matching is currently limited to exact property matches
-- Auto-import functionality is not yet implemented
 - Generic types are not fully supported in the MVP
 
 ## Release Notes
@@ -104,11 +114,13 @@ IntelliType can be configured through VS Code settings:
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+This project is open source and contributions are welcome! If you have a feature request, bug report, or want to contribute to the code, please check out the [GitHub repository](https://github.com/raziel5746/IntelliType).
+
+Please feel free to open an issue or submit a pull request.
 
 ## License
 
-MIT
+This extension is licensed under the [MIT License](https://github.com/raziel5746/IntelliType/blob/main/LICENSE).
 
 ---
 
