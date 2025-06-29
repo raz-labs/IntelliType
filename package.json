@@ -1,0 +1,90 @@
+{
+  "name": "intellitype",
+  "displayName": "IntelliType",
+  "description": "Intelligent TypeScript type discovery and application for VS Code",
+  "version": "0.1.0",
+  "publisher": "raz-labs",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "typescript",
+    "types",
+    "interfaces",
+    "intellisense",
+    "productivity"
+  ],
+
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/intellitype.git"
+  },
+  "bugs": {
+    "url": "https://github.com/username/intellitype/issues"
+  },
+  "homepage": "https://github.com/username/intellitype#readme",
+  "license": "MIT",
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "IntelliType",
+      "properties": {
+        "intellitype.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable IntelliType extension"
+        },
+        "intellitype.showDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show diagnostic squiggly lines for untyped objects"
+        },
+        "intellitype.minimumCompatibilityScore": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum compatibility score for type suggestions (0-1)"
+        },
+        "intellitype.maxSuggestions": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of type suggestions to show in hover tooltip"
+        },
+        "intellitype.includeNodeModules": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include types from node_modules in suggestions"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^5.53.0",
+    "@typescript-eslint/parser": "^5.53.0",
+    "@vscode/test-electron": "^2.2.3",
+    "eslint": "^8.34.0",
+    "typescript": "^4.9.5"
+  }
+}
