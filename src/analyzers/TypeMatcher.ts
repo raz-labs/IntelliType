@@ -173,8 +173,9 @@ export class TypeMatcher {
         for (const file of tsFiles) {
             // Update progress every 10 files to avoid UI overhead
             if (processed % 10 === 0 && progressCallback) {
+                const percentage = Math.round((processed / tsFiles.length) * 100);
                 progressCallback({
-                    message: `Processing ${processed}/${tsFiles.length} files...`
+                    message: `Processing ${percentage}%`
                 });
             }
             
