@@ -54,7 +54,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         
         if (!untypedObject) {
             console.log('❌ IntelliType: No untyped object found at position');
-            vscode.window.showWarningMessage('No untyped object found at this position');
             return;
         }
         
@@ -64,9 +63,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         console.log(`🔍 IntelliType: Found ${matches.length} matches`);
         
         if (matches.length === 0) {
-            vscode.window.showInformationMessage(
-                `No matching types found for object '${untypedObject.name}'. Consider creating a new interface.`
-            );
             return;
         }
 
@@ -109,7 +105,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         
         if (!untypedObject) {
             console.log('❌ IntelliType: No untyped object found at position');
-            vscode.window.showWarningMessage('No untyped object found at this position');
             return;
         }
         
@@ -130,8 +125,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         const selectedMatch = allMatches.find(match => match.typeName === typeName);
         if (selectedMatch) {
             await this.applyType(untypedObject, selectedMatch, doc);
-        } else {
-            vscode.window.showErrorMessage(`Type '${typeName}' not found`);
         }
     }
 
@@ -165,10 +158,6 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         
         // Hide hover tooltip after applying type
         await this.dismissHover();
-        
-        vscode.window.showInformationMessage(
-            `Applied type '${typeMatch.typeName}' to '${untypedObject.name}'`
-        );
     }
 
     private async checkAndHandleExport(typeMatch: TypeMatch): Promise<boolean> {

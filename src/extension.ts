@@ -34,11 +34,6 @@ export function activate(context: vscode.ExtensionContext) {
             })
         );
 
-        // Show welcome message
-        const config = vscode.workspace.getConfiguration('intellitype');
-        if (config.get('enabled')) {
-            vscode.window.showInformationMessage('IntelliType is ready to help you discover types!');
-        }
     } catch (error) {
         console.error('❌ Failed to activate IntelliType:', error);
         vscode.window.showErrorMessage(`IntelliType failed to activate: ${error}`);

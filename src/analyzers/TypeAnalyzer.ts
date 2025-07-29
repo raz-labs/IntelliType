@@ -45,6 +45,20 @@ export class TypeAnalyzer {
             return [];
         }
 
+        // Ultra-fast pre-filtering using indexOf (fastest string search)
+        const text = document.getText();
+        if (text.length === 0 || text.length > 30000) return []; // Even smaller threshold
+        
+        // Lightning-fast checks using indexOf
+        const hasConst = text.indexOf('const ') !== -1;
+        const hasLet = text.indexOf('let ') !== -1;
+        const hasVar = text.indexOf('var ') !== -1;
+        const hasObjectLiteral = text.indexOf('{') !== -1 && text.indexOf('}') !== -1;
+        
+        if ((!hasConst && !hasLet && !hasVar) || !hasObjectLiteral) {
+            return [];
+        }
+
         const untypedObjects: UntypedObject[] = [];
         const sourceFile = this.getOrCreateSourceFile(document);
         

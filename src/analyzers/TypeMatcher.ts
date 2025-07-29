@@ -17,6 +17,9 @@ export class TypeMatcher {
     private initializationPromise: Promise<void> | undefined;
     private updateDebounceTimer: NodeJS.Timeout | undefined;
     private readonly DEBOUNCE_MS = 500;
+    private fileTimestamps: Map<string, number> = new Map(); // Track file modification times
+    private lastScanTime: number = 0;
+    private astCache: Map<string, { ast: ts.SourceFile; version: number; timestamp: number }> = new Map(); // AST-level cache
 
     constructor() {
         // Don't block constructor - initialize asynchronously
@@ -38,14 +41,22 @@ export class TypeMatcher {
         // Setup file watcher first
         this.setupFileWatcher();
         
-        // Show progress for initial scan
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "IntelliType: Analyzing workspace types",
-            cancellable: false
-        }, async (progress) => {
-            await this.scanWorkspaceForTypes(progress);
-        });
+        // Show progress for initial scan in status bar
+        const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+        statusBarItem.text = "$(sync~spin) IntelliType: Analyzing workspace...";
+        statusBarItem.show();
+        
+        try {
+            await this.scanWorkspaceForTypes((progress) => {
+                statusBarItem.text = `$(sync~spin) IntelliType: ${progress.message || 'Analyzing...'}`;
+            });
+            statusBarItem.text = "$(check) IntelliType: Ready";
+            setTimeout(() => statusBarItem.hide(), 3000);
+        } catch (error) {
+            statusBarItem.text = "$(error) IntelliType: Error";
+            setTimeout(() => statusBarItem.hide(), 5000);
+            throw error;
+        }
 
         this.isInitialized = true;
         console.log(`✅ IntelliType: Analysis complete! Found ${this.getTotalInterfaceCount()} interfaces`);
@@ -88,7 +99,9 @@ export class TypeMatcher {
         // Set new debounce timer
         this.updateDebounceTimer = setTimeout(async () => {
             console.log(`🔄 IntelliType: Updating ${path.basename(uri.fsPath)}`);
-            await this.extractInterfacesFromFile(uri);
+            if (this.isInitialized) {
+                await this.extractInterfacesFromFile(uri);
+            }
         }, this.DEBOUNCE_MS);
     }
 
@@ -96,6 +109,7 @@ export class TypeMatcher {
         if (this.interfaceCache.has(uri.fsPath)) {
             console.log(`🗑️ IntelliType: Removing ${path.basename(uri.fsPath)} from cache`);
             this.interfaceCache.delete(uri.fsPath);
+            this.fileTimestamps.delete(uri.fsPath);
         }
     }
 
@@ -129,7 +143,7 @@ export class TypeMatcher {
         return allPatterns.some(pattern => normalizedPath.includes(pattern));
     }
 
-    private async scanWorkspaceForTypes(progress?: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
+    private async scanWorkspaceForTypes(progressCallback?: (progress: { message?: string; increment?: number }) => void): Promise<void> {
         // Get configuration
         const config = vscode.workspace.getConfiguration('intellitype');
         const includeNodeModules = config.get<boolean>('includeNodeModules', false);
@@ -153,24 +167,25 @@ export class TypeMatcher {
             return;
         }
 
-        // Process files in configurable batches
-        for (let i = 0; i < tsFiles.length; i += batchSize) {
-            const batch = tsFiles.slice(i, i + batchSize);
-            
-            // Update progress
-            if (progress) {
-                const percentage = ((i + batch.length) / tsFiles.length) * 100;
-                progress.report({
-                    message: `Processing ${i + batch.length}/${tsFiles.length} files...`,
-                    increment: (batchSize / tsFiles.length) * 100
+        // Single-threaded sequential processing for maximum performance
+        let processed = 0;
+        
+        for (const file of tsFiles) {
+            // Update progress every 10 files to avoid UI overhead
+            if (processed % 10 === 0 && progressCallback) {
+                progressCallback({
+                    message: `Processing ${processed}/${tsFiles.length} files...`
                 });
             }
-
-            // Process batch
-            await Promise.all(batch.map(file => this.extractInterfacesFromFile(file)));
             
-            // Allow other operations to run
-            await new Promise(resolve => setImmediate(resolve));
+            // Process file immediately - no batching overhead
+            await this.extractInterfacesFromFile(file);
+            processed++;
+            
+            // Yield control every 50 files to keep UI responsive
+            if (processed % 50 === 0) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
         }
     }
 
@@ -184,17 +199,49 @@ export class TypeMatcher {
             const document = await vscode.workspace.openTextDocument(fileUri);
             const text = document.getText();
             
-            // Quick check - skip files with no interfaces
-            if (!text.includes('interface ') && !text.includes('type ')) {
+            // Ultra-fast pre-filtering - check file size and basic content
+            if (text.length === 0 || text.length > 50000) return; // Smaller threshold for faster processing
+            
+            // Lightning-fast string checks (fastest possible)
+            const hasInterface = text.indexOf('interface ') !== -1;
+            const hasType = text.indexOf('type ') !== -1;
+            const hasExportInterface = text.indexOf('export interface') !== -1;
+            const hasExportType = text.indexOf('export type') !== -1;
+            
+            if (!hasInterface && !hasType && !hasExportInterface && !hasExportType) {
                 return;
             }
+            
+            // Quick comment ratio check - avoid splitting unless necessary
+            if (text.indexOf('//') > 0 || text.indexOf('/*') > 0) {
+                const commentCount = (text.match(/\/\/|\/\*/g) || []).length;
+                const lineCount = (text.match(/\n/g) || []).length + 1;
+                if (commentCount > lineCount * 0.7) return; // Skip files that are >70% comments
+            }
 
-            const sourceFile = ts.createSourceFile(
-                fileUri.fsPath,
-                text,
-                ts.ScriptTarget.Latest,
-                true
-            );
+            // Check AST cache first to avoid re-parsing
+            let sourceFile: ts.SourceFile;
+            const filePath = fileUri.fsPath;
+            const cached = this.astCache.get(filePath);
+            
+            if (cached && cached.timestamp === (await vscode.workspace.fs.stat(fileUri)).mtime) {
+                sourceFile = cached.ast;
+                console.log(`⚡ Using cached AST for ${path.basename(filePath)}`);
+            } else {
+                sourceFile = ts.createSourceFile(
+                    filePath,
+                    text,
+                    ts.ScriptTarget.Latest,
+                    true
+                );
+                
+                // Cache the AST for future use
+                this.astCache.set(filePath, {
+                    ast: sourceFile,
+                    version: 1,
+                    timestamp: (await vscode.workspace.fs.stat(fileUri)).mtime
+                });
+            }
 
             const interfaces: InterfaceInfo[] = [];
 
@@ -223,6 +270,14 @@ export class TypeMatcher {
             } else {
                 // Remove from cache if no interfaces found
                 this.interfaceCache.delete(fileUri.fsPath);
+            }
+            
+            // Update timestamp
+            try {
+                const stat = await vscode.workspace.fs.stat(fileUri);
+                this.fileTimestamps.set(fileUri.fsPath, stat.mtime);
+            } catch (error) {
+                // File might be deleted, ignore timestamp
             }
         } catch (error) {
             console.error(`❌ IntelliType: Error processing ${fileUri.fsPath}:`, error);
@@ -644,12 +699,53 @@ export class TypeMatcher {
         return { missing, extra };
     }
 
-    public async refreshCache(): Promise<void> {
-        console.log('🔄 IntelliType: Manual refresh requested');
-        this.interfaceCache.clear();
-        this.isInitialized = false;
-        this.initializationPromise = undefined;
-        await this.initializeAsync();
+    public async refreshCache(incremental: boolean = false): Promise<void> {
+        console.log(`🔄 IntelliType: ${incremental ? 'Incremental' : 'Full'} refresh requested`);
+        
+        if (!incremental) {
+            this.interfaceCache.clear();
+            this.fileTimestamps.clear();
+            this.isInitialized = false;
+            this.initializationPromise = undefined;
+            await this.initializeAsync();
+        } else {
+            await this.performIncrementalScan();
+        }
+    }
+
+    private async performIncrementalScan(): Promise<void> {
+        const config = vscode.workspace.getConfiguration('intellitype');
+        const includeNodeModules = config.get<boolean>('includeNodeModules', false);
+        
+        let excludePattern = '{**/dist/**,**/build/**,**/out/**,**/.next/**,**/coverage/**,**/*.test.ts,**/*.spec.ts,**/*.d.ts}';
+        if (!includeNodeModules) {
+            excludePattern = '{**/node_modules/**,**/dist/**,**/build/**,**/out/**,**/.next/**,**/coverage/**,**/*.test.ts,**/*.spec.ts,**/*.d.ts}';
+        }
+        
+        const tsFiles = await vscode.workspace.findFiles('**/*.{ts,tsx}', excludePattern);
+        const changedFiles: vscode.Uri[] = [];
+        
+        for (const file of tsFiles) {
+            try {
+                const stat = await vscode.workspace.fs.stat(file);
+                const lastModified = stat.mtime;
+                const cachedTime = this.fileTimestamps.get(file.fsPath);
+                
+                if (!cachedTime || lastModified > cachedTime) {
+                    changedFiles.push(file);
+                    this.fileTimestamps.set(file.fsPath, lastModified);
+                }
+            } catch (error) {
+                // File might have been deleted, remove from cache
+                this.interfaceCache.delete(file.fsPath);
+                this.fileTimestamps.delete(file.fsPath);
+            }
+        }
+        
+        console.log(`🔄 IntelliType: Processing ${changedFiles.length} changed files`);
+        
+        // Process changed files in parallel
+        await Promise.all(changedFiles.map(file => this.extractInterfacesFromFile(file)));
     }
 
     private getRelativePath(fromFile: string, toFile: string): string {
@@ -702,6 +798,7 @@ export class TypeMatcher {
         return score;
     }
 
+
     public dispose(): void {
         if (this.fileWatcher) {
             this.fileWatcher.dispose();
@@ -709,5 +806,8 @@ export class TypeMatcher {
         if (this.updateDebounceTimer) {
             clearTimeout(this.updateDebounceTimer);
         }
+        this.interfaceCache.clear();
+        this.fileTimestamps.clear();
+        this.astCache.clear();
     }
 } 
