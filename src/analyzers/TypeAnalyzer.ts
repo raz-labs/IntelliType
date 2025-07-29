@@ -13,13 +13,8 @@ export class TypeAnalyzer {
         this.initializeTypeScript();
         this.typeMatcher = new TypeMatcher();
         
-        // Listen for file changes to refresh the type cache
-        vscode.workspace.onDidSaveTextDocument((document) => {
-            if (document.languageId === 'typescript' || document.languageId === 'typescriptreact') {
-                console.log('🔄 IntelliType: Refreshing type cache due to file save');
-                this.typeMatcher.refreshCache();
-            }
-        });
+        // No longer need aggressive file save refresh - file watcher handles this automatically
+        // Old approach was causing the performance issues you noticed!
     }
 
     private initializeTypeScript() {
@@ -63,12 +58,9 @@ export class TypeAnalyzer {
         const visit = (node: ts.Node) => {
             // Look for variable declarations without explicit types
             if (ts.isVariableDeclaration(node)) {
-                console.log('🔍 Found variable declaration:', node.name?.getText(sourceFile));
                 if (!node.type && node.initializer) {
-                    console.log('📋 Variable has no type annotation and has initializer');
                     // Check if the initializer is an object literal
                     if (ts.isObjectLiteralExpression(node.initializer)) {
-                        console.log('🎯 Found object literal expression!');
                         const objectShape = this.analyzeObjectLiteral(node.initializer, sourceFile);
                         if (objectShape && node.name && ts.isIdentifier(node.name)) {
                             const start = document.positionAt(node.name.getStart(sourceFile));
@@ -81,7 +73,6 @@ export class TypeAnalyzer {
                                 location,
                                 document
                             });
-                            console.log(`✅ Added untyped object: ${node.name.text}`);
                         }
                     }
                 }
@@ -189,7 +180,7 @@ export class TypeAnalyzer {
     }
 
     public async findMatchingTypes(objectShape: ObjectShape): Promise<TypeMatch[]> {
-        return this.typeMatcher.findMatches(objectShape);
+        return await this.typeMatcher.findMatches(objectShape);
     }
 
     private getOrCreateSourceFile(document: vscode.TextDocument): ts.SourceFile | undefined {
@@ -214,5 +205,6 @@ export class TypeAnalyzer {
         this.sourceFiles.clear();
         this.program = undefined;
         this.typeChecker = undefined;
+        this.typeMatcher.dispose(); // Make sure to dispose the TypeMatcher too
     }
 } 

@@ -27,6 +27,12 @@ export interface ParameterSignature {
     optional: boolean;
 }
 
+export interface NestedPropertyMatch {
+    propertyName: string;
+    compatibilityScore: number;
+    isNested: boolean;
+}
+
 export interface TypeMatch {
     typeName: string;
     filePath: string;
@@ -35,6 +41,7 @@ export interface TypeMatch {
     missingProperties: string[];
     extraProperties: string[];
     isExactMatch: boolean;
+    nestedPropertyMatches?: NestedPropertyMatch[];
 }
 
 export interface UntypedObject {

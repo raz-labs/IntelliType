@@ -2,6 +2,23 @@
 
 All notable changes to the "IntelliType" extension will be documented in this file.
 
+## [0.2.0] - 2024-01-01 - Enhanced Import Experience
+
+### Added
+- 🚀 **Auto-Export**: Automatically adds `export` keyword to types that aren't exported when importing them
+- ✨ **Smart Hover Dismiss**: Auto-closes hover tooltip after clicking on a suggested type link for better UX
+- 📂 **Improved Import Paths**: Intelligently removes `/index.tsx` and `/index.ts` from import paths for cleaner imports
+
+### Improved
+- Enhanced import path resolution for index files
+- Better user experience with automatic hover dismissal
+- Seamless workflow for importing non-exported types
+
+### Technical Changes
+- Added `checkAndHandleExport()` method to automatically export types when needed
+- Enhanced `getRelativePath()` to handle index files properly
+- Added `dismissHover()` method for better tooltip management
+
 ## [0.1.0] - 2024-01-01 - MVP Release
 
 ### Added

@@ -149,6 +149,12 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         // Smart import logic
         const needsImport = this.shouldAddImport(typeMatch, document);
         if (needsImport) {
+            // Check if type needs to be exported
+            const needsExport = await this.checkAndHandleExport(typeMatch);
+            if (needsExport) {
+                console.log(`🔧 IntelliType: Adding export to ${typeMatch.typeName} in ${typeMatch.filePath}`);
+            }
+            
             const importStatement = this.createImportStatement(typeMatch, document);
             if (importStatement) {
                 edit.insert(document.uri, importStatement.position, importStatement.text);
@@ -157,9 +163,65 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
 
         await vscode.workspace.applyEdit(edit);
         
+        // Hide hover tooltip after applying type
+        await this.dismissHover();
+        
         vscode.window.showInformationMessage(
             `Applied type '${typeMatch.typeName}' to '${untypedObject.name}'`
         );
+    }
+
+    private async checkAndHandleExport(typeMatch: TypeMatch): Promise<boolean> {
+        try {
+            const fileUri = vscode.Uri.file(typeMatch.filePath);
+            const document = await vscode.workspace.openTextDocument(fileUri);
+            const text = document.getText();
+
+            // Check if the type is already exported
+            const exportRegex = new RegExp(`export\\s+(interface|type)\\s+${typeMatch.typeName}\\b`, 'g');
+            if (exportRegex.test(text)) {
+                return false; // Already exported
+            }
+
+            // Find the type definition
+            const typeDefRegex = new RegExp(`(^|\\n)\\s*(interface|type)\\s+${typeMatch.typeName}\\b`, 'g');
+            const match = typeDefRegex.exec(text);
+            
+            if (match) {
+                const startIndex = match.index;
+                const lineStart = text.lastIndexOf('\n', startIndex) + 1;
+                const beforeKeyword = text.substring(lineStart, startIndex + match[0].indexOf(match[2]));
+                
+                // Check if there's already an export keyword
+                if (!beforeKeyword.includes('export')) {
+                    // Add export keyword
+                    const edit = new vscode.WorkspaceEdit();
+                    const position = document.positionAt(startIndex + match[0].indexOf(match[2]));
+                    edit.insert(fileUri, position, 'export ');
+                    await vscode.workspace.applyEdit(edit);
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.error('❌ IntelliType: Error checking/adding export:', error);
+        }
+        return false;
+    }
+
+    private async dismissHover(): Promise<void> {
+        try {
+            // Execute command to dismiss hover tooltip
+            await vscode.commands.executeCommand('closeHover');
+        } catch (error) {
+            // If closeHover doesn't work, try alternative methods
+            try {
+                await vscode.commands.executeCommand('editor.action.triggerParameterHints');
+                await vscode.commands.executeCommand('hideSuggestWidget');
+            } catch (altError) {
+                // Silently fail - hover dismissal is nice-to-have
+                console.log('💡 IntelliType: Could not dismiss hover (this is normal)');
+            }
+        }
     }
 
     private async goToDefinitionCommand(filePath: string, line: number, character: number) {
@@ -362,11 +424,19 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         // Get relative path from current file to target file
         const relativePath = path.relative(currentDir, fromFile);
         
-        // Remove the .ts extension
-        const withoutExtension = relativePath.replace(/\.ts$/, '');
+        // Remove the .ts/.tsx extension
+        const withoutExtension = relativePath.replace(/\.(ts|tsx)$/, '');
+        
+        // Handle index files - remove /index from the path
+        const cleanPath = withoutExtension.replace(/\/index$/, '') || '.';
         
         // Convert backslashes to forward slashes for ES module imports
-        const normalizedPath = withoutExtension.replace(/\\/g, '/');
+        const normalizedPath = cleanPath.replace(/\\/g, '/');
+        
+        // Handle edge cases for index files
+        if (normalizedPath === '.' || normalizedPath === '') {
+            return './';
+        }
         
         // Ensure it starts with ./ or ../
         if (!normalizedPath.startsWith('.')) {
@@ -442,6 +512,7 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
 
     private async getTypeStructure(match: TypeMatch): Promise<string | null> {
         console.log(`[IntelliType] Attempting to get structure for '${match.typeName}' from '${match.filePath}'`);
+        
         try {
             const fileUri = vscode.Uri.file(match.filePath);
             const document = await vscode.workspace.openTextDocument(fileUri);
@@ -484,7 +555,13 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
                 return null;
             }
             
-            const structure = text.substring(startIndex, endIndex);
+            let structure = text.substring(startIndex, endIndex);
+            
+            // Enhance structure with match percentages for nested types
+            if (match.nestedPropertyMatches && match.nestedPropertyMatches.length > 0) {
+                structure = this.addMatchPercentagesToStructure(structure, match.nestedPropertyMatches);
+            }
+            
             console.log(`[IntelliType] Extracted structure: \n${structure}`);
             return structure;
 
@@ -494,7 +571,45 @@ export class IntelliTypeProvider implements vscode.HoverProvider {
         }
     }
 
+    private addMatchPercentagesToStructure(structure: string, nestedMatches: any[]): string {
+        let enhancedStructure = structure;
+        
+        // Create a map of property names to their match scores
+        const matchMap = new Map();
+        for (const match of nestedMatches) {
+            if (match.isNested && match.compatibilityScore < 1.0) {
+                const percentage = Math.round(match.compatibilityScore * 100);
+                matchMap.set(match.propertyName, percentage);
+            }
+        }
+        
+        // Process each line to add match percentages
+        const lines = enhancedStructure.split('\n');
+        const processedLines = lines.map((line) => {
+            // Look for: whitespace + propertyName + optional? + : + type + optional;
+            const propertyMatch = line.match(/^\s*(\w+)(\??):\s*([^;]+);?\s*$/);
+            if (propertyMatch) {
+                const [fullMatch, propName, optional, propType] = propertyMatch;
+                
+                if (matchMap.has(propName)) {
+                    const percentage = matchMap.get(propName);
+                    // Add the percentage after the type
+                    const hasSemicolon = line.includes(';');
+                    const indent = line.match(/^\s*/)?.[0] || '';
+                    if (hasSemicolon) {
+                        return `${indent}${propName}${optional}: ${propType.trim()};  ${percentage}%`;
+                    } else {
+                        return `${indent}${propName}${optional}: ${propType.trim()}  ${percentage}%`;
+                    }
+                }
+            }
+            return line;
+        });
+        
+        return processedLines.join('\n');
+    }
+
     public dispose() {
         this.disposables.forEach(d => d.dispose());
     }
-} 
+}

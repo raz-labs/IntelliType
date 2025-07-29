@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as ts from 'typescript';
-import { ObjectShape, TypeMatch, PropertySignature } from '../types';
+import { ObjectShape, TypeMatch, PropertySignature, NestedPropertyMatch } from '../types';
 import * as path from 'path';
 
 interface InterfaceInfo {
@@ -12,25 +12,186 @@ interface InterfaceInfo {
 
 export class TypeMatcher {
     private interfaceCache: Map<string, InterfaceInfo[]> = new Map();
+    private fileWatcher: vscode.FileSystemWatcher | undefined;
+    private isInitialized = false;
+    private initializationPromise: Promise<void> | undefined;
+    private updateDebounceTimer: NodeJS.Timeout | undefined;
+    private readonly DEBOUNCE_MS = 500;
 
     constructor() {
-        this.scanWorkspaceForTypes();
+        // Don't block constructor - initialize asynchronously
+        this.initializeAsync();
     }
 
-    private async scanWorkspaceForTypes() {
-        const tsFiles = await vscode.workspace.findFiles('**/*.{ts,tsx}', '**/node_modules/**');
+    private async initializeAsync(): Promise<void> {
+        if (this.initializationPromise) {
+            return this.initializationPromise;
+        }
+
+        this.initializationPromise = this.performInitialization();
+        return this.initializationPromise;
+    }
+
+    private async performInitialization(): Promise<void> {
+        console.log('🚀 IntelliType: Starting type analysis...');
         
-        for (const file of tsFiles) {
-            await this.extractInterfacesFromFile(file);
+        // Setup file watcher first
+        this.setupFileWatcher();
+        
+        // Show progress for initial scan
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "IntelliType: Analyzing workspace types",
+            cancellable: false
+        }, async (progress) => {
+            await this.scanWorkspaceForTypes(progress);
+        });
+
+        this.isInitialized = true;
+        console.log(`✅ IntelliType: Analysis complete! Found ${this.getTotalInterfaceCount()} interfaces`);
+    }
+
+    private getTotalInterfaceCount(): number {
+        let total = 0;
+        for (const interfaces of this.interfaceCache.values()) {
+            total += interfaces.length;
+        }
+        return total;
+    }
+
+    private setupFileWatcher(): void {
+        // Watch for TypeScript file changes
+        this.fileWatcher = vscode.workspace.createFileSystemWatcher(
+            '**/*.{ts,tsx}',
+            false, // don't ignore creates
+            false, // don't ignore changes
+            false  // don't ignore deletes
+        );
+
+        // Debounced update for file changes
+        this.fileWatcher.onDidCreate(this.debouncedFileUpdate.bind(this));
+        this.fileWatcher.onDidChange(this.debouncedFileUpdate.bind(this));
+        this.fileWatcher.onDidDelete(this.handleFileDelete.bind(this));
+    }
+
+    private debouncedFileUpdate(uri: vscode.Uri): void {
+        // Skip if file should be ignored
+        if (this.shouldIgnoreFile(uri.fsPath)) {
+            return;
+        }
+
+        // Clear existing debounce timer
+        if (this.updateDebounceTimer) {
+            clearTimeout(this.updateDebounceTimer);
+        }
+
+        // Set new debounce timer
+        this.updateDebounceTimer = setTimeout(async () => {
+            console.log(`🔄 IntelliType: Updating ${path.basename(uri.fsPath)}`);
+            await this.extractInterfacesFromFile(uri);
+        }, this.DEBOUNCE_MS);
+    }
+
+    private handleFileDelete(uri: vscode.Uri): void {
+        if (this.interfaceCache.has(uri.fsPath)) {
+            console.log(`🗑️ IntelliType: Removing ${path.basename(uri.fsPath)} from cache`);
+            this.interfaceCache.delete(uri.fsPath);
         }
     }
 
-    private async extractInterfacesFromFile(fileUri: vscode.Uri) {
+    private shouldIgnoreFile(filePath: string): boolean {
+        // Normalize path separators
+        const normalizedPath = filePath.replace(/\\/g, '/').toLowerCase();
+        
+        // Get exclude patterns from configuration
+        const config = vscode.workspace.getConfiguration('intellitype');
+        const configPatterns = config.get<string[]>('excludePatterns', []);
+        
+        // Default patterns for performance
+        const defaultPatterns = [
+            '/node_modules/',
+            '/dist/',
+            '/build/',
+            '/out/',
+            '/.next/',
+            '/coverage/',
+            '/.git/',
+            '.test.ts',
+            '.spec.ts',
+            '.d.ts',
+            '.js.map',
+            '.min.js'
+        ];
+        
+        // Combine default and config patterns
+        const allPatterns = [...defaultPatterns, ...configPatterns.map(p => p.toLowerCase())];
+        
+        return allPatterns.some(pattern => normalizedPath.includes(pattern));
+    }
+
+    private async scanWorkspaceForTypes(progress?: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
+        // Get configuration
+        const config = vscode.workspace.getConfiguration('intellitype');
+        const includeNodeModules = config.get<boolean>('includeNodeModules', false);
+        const batchSize = config.get<number>('batchSize', 10);
+        
+        // Build exclude pattern based on configuration
+        let excludePattern = '{**/dist/**,**/build/**,**/out/**,**/.next/**,**/coverage/**,**/*.test.ts,**/*.spec.ts,**/*.d.ts}';
+        if (!includeNodeModules) {
+            excludePattern = '{**/node_modules/**,**/dist/**,**/build/**,**/out/**,**/.next/**,**/coverage/**,**/*.test.ts,**/*.spec.ts,**/*.d.ts}';
+        }
+        
+        // Use more specific glob pattern with exclusions
+        const tsFiles = await vscode.workspace.findFiles(
+            '**/*.{ts,tsx}',
+            excludePattern
+        );
+        
+        console.log(`🔍 IntelliType: Found ${tsFiles.length} TypeScript files to analyze`);
+        
+        if (tsFiles.length === 0) {
+            return;
+        }
+
+        // Process files in configurable batches
+        for (let i = 0; i < tsFiles.length; i += batchSize) {
+            const batch = tsFiles.slice(i, i + batchSize);
+            
+            // Update progress
+            if (progress) {
+                const percentage = ((i + batch.length) / tsFiles.length) * 100;
+                progress.report({
+                    message: `Processing ${i + batch.length}/${tsFiles.length} files...`,
+                    increment: (batchSize / tsFiles.length) * 100
+                });
+            }
+
+            // Process batch
+            await Promise.all(batch.map(file => this.extractInterfacesFromFile(file)));
+            
+            // Allow other operations to run
+            await new Promise(resolve => setImmediate(resolve));
+        }
+    }
+
+    private async extractInterfacesFromFile(fileUri: vscode.Uri): Promise<void> {
         try {
+            // Skip files that should be ignored
+            if (this.shouldIgnoreFile(fileUri.fsPath)) {
+                return;
+            }
+
             const document = await vscode.workspace.openTextDocument(fileUri);
+            const text = document.getText();
+            
+            // Quick check - skip files with no interfaces
+            if (!text.includes('interface ') && !text.includes('type ')) {
+                return;
+            }
+
             const sourceFile = ts.createSourceFile(
                 fileUri.fsPath,
-                document.getText(),
+                text,
                 ts.ScriptTarget.Latest,
                 true
             );
@@ -56,11 +217,17 @@ export class TypeMatcher {
 
             visit(sourceFile);
             
+            // Update cache (even if empty - this removes stale entries)
             if (interfaces.length > 0) {
                 this.interfaceCache.set(fileUri.fsPath, interfaces);
+            } else {
+                // Remove from cache if no interfaces found
+                this.interfaceCache.delete(fileUri.fsPath);
             }
         } catch (error) {
-            console.error(`Error extracting interfaces from ${fileUri.fsPath}:`, error);
+            console.error(`❌ IntelliType: Error processing ${fileUri.fsPath}:`, error);
+            // Remove problematic file from cache
+            this.interfaceCache.delete(fileUri.fsPath);
         }
     }
 
@@ -130,12 +297,18 @@ export class TypeMatcher {
         return result;
     }
 
-    public findMatches(objectShape: ObjectShape): TypeMatch[] {
+    public async findMatches(objectShape: ObjectShape): Promise<TypeMatch[]> {
+        // Ensure initialization is complete
+        if (!this.isInitialized) {
+            console.log('⏳ IntelliType: Waiting for initialization...');
+            await this.initializeAsync();
+        }
+
         const matches: TypeMatch[] = [];
 
         for (const [filePath, interfaces] of this.interfaceCache) {
             for (const interfaceInfo of interfaces) {
-                const score = this.calculateCompatibilityScore(objectShape, interfaceInfo);
+                const { score, nestedMatches } = this.calculateCompatibilityScoreWithNested(objectShape, interfaceInfo);
                 
                 if (score > 0) {
                     const { missing, extra } = this.compareProperties(objectShape, interfaceInfo);
@@ -147,7 +320,8 @@ export class TypeMatcher {
                         compatibilityScore: score,
                         missingProperties: missing,
                         extraProperties: extra,
-                        isExactMatch: missing.length === 0 && extra.length === 0
+                        isExactMatch: missing.length === 0 && extra.length === 0,
+                        nestedPropertyMatches: nestedMatches
                     });
                 }
             }
@@ -157,12 +331,13 @@ export class TypeMatcher {
         return matches.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
     }
 
-    private calculateCompatibilityScore(objectShape: ObjectShape, interfaceInfo: InterfaceInfo): number {
+    private calculateCompatibilityScoreWithNested(objectShape: ObjectShape, interfaceInfo: InterfaceInfo): { score: number, nestedMatches: NestedPropertyMatch[] } {
         const objPropMap = new Map(objectShape.properties.map(p => [p.name, p]));
         const intPropMap = new Map(interfaceInfo.properties.map(p => [p.name, p]));
 
         let totalScore = 0;
         let totalWeight = 0;
+        const nestedMatches: NestedPropertyMatch[] = [];
 
         // Check interface properties against object properties
         for (const [propName, intProp] of intPropMap) {
@@ -173,12 +348,30 @@ export class TypeMatcher {
                 // Use the new nested-aware compatibility checking
                 const compatibility = this.isTypeCompatibleWithNested(objProp, intProp);
                 totalScore += compatibility;
+                
+                // Store nested match information
+                const isNested = this.isNestedType(objProp, intProp);
+                nestedMatches.push({
+                    propertyName: propName,
+                    compatibilityScore: compatibility,
+                    isNested: isNested
+                });
             } else if (!intProp.optional) {
                 // Missing required property - no points
                 totalScore += 0;
+                nestedMatches.push({
+                    propertyName: propName,
+                    compatibilityScore: 0,
+                    isNested: false
+                });
             } else {
                 // Missing optional property - partial credit
                 totalScore += 0.5;
+                nestedMatches.push({
+                    propertyName: propName,
+                    compatibilityScore: 0.5,
+                    isNested: false
+                });
             }
         }
 
@@ -190,7 +383,27 @@ export class TypeMatcher {
             }
         }
 
-        return totalWeight > 0 ? Math.max(0, Math.min(1, totalScore / totalWeight)) : 0;
+        const finalScore = totalWeight > 0 ? Math.max(0, Math.min(1, totalScore / totalWeight)) : 0;
+        return { score: finalScore, nestedMatches };
+    }
+
+    private isNestedType(objProp: PropertySignature, intProp: PropertySignature): boolean {
+        // Check if this is a nested type (not a primitive)
+        const primitiveTypes = ['string', 'number', 'boolean', 'Date', 'any', 'void'];
+        
+        // If it's an array, check the element type
+        if (intProp.type.endsWith('[]')) {
+            const elementType = intProp.type.slice(0, -2);
+            return !primitiveTypes.includes(elementType);
+        }
+        
+        // If it's an inline object type
+        if (intProp.type.includes('{')) {
+            return true;
+        }
+        
+        // If it's not a primitive type, it's likely a nested interface
+        return !primitiveTypes.includes(intProp.type);
     }
 
     private isTypeCompatible(objType: string, intType: string): boolean {
@@ -431,9 +644,12 @@ export class TypeMatcher {
         return { missing, extra };
     }
 
-    public async refreshCache() {
+    public async refreshCache(): Promise<void> {
+        console.log('🔄 IntelliType: Manual refresh requested');
         this.interfaceCache.clear();
-        await this.scanWorkspaceForTypes();
+        this.isInitialized = false;
+        this.initializationPromise = undefined;
+        await this.initializeAsync();
     }
 
     private getRelativePath(fromFile: string, toFile: string): string {
@@ -479,5 +695,19 @@ export class TypeMatcher {
         }
 
         return properties;
+    }
+
+    private calculateCompatibilityScore(objectShape: ObjectShape, interfaceInfo: InterfaceInfo): number {
+        const { score } = this.calculateCompatibilityScoreWithNested(objectShape, interfaceInfo);
+        return score;
+    }
+
+    public dispose(): void {
+        if (this.fileWatcher) {
+            this.fileWatcher.dispose();
+        }
+        if (this.updateDebounceTimer) {
+            clearTimeout(this.updateDebounceTimer);
+        }
     }
 } 
